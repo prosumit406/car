@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Advanced Car Idle Game</title>
+<style>
+body { margin:0; overflow:hidden; background:#87CEEB; font-family:sans-serif; }
+#ui {
+  position:absolute; top:10px; right:10px; color:#fff; font-size:16px; text-shadow:1px 1px 2px #000;
+  width:240px;
+}
+button { padding:6px 12px; margin:3px 0; font-size:14px; cursor:pointer; width:100%; }
+#carsUI { display:flex; flex-direction:column; gap:5px; margin-top:10px; max-height:320px; overflow-y:auto; }
+.carBtn { width:100%; height:40px; border:2px solid #fff; display:flex; justify-content:center; align-items:center; cursor:pointer; text-align:center; font-size:12px; }
+.carBtn.disabled { opacity:0.5; cursor:not-allowed; }
+#boostBar { width:100%; height:10px; background:#333; margin-top:5px; position:relative; }
+#boostFill { width:0%; height:100%; background:#ff0; transition: width 0.1s; }
+#saveLoad { position:absolute; top:10px; left:50%; transform:translateX(-50%); color:#fff; text-shadow:1px 1px 2px #000; }
+#saveLoad button { width:80px; margin:0 5px; }
+</style>
+</head>
+<body>
+<div id="saveLoad">
+  <button id="saveGame">Save</button>
+  <button id="loadGame">Load</button>
+</div>
+<div id="ui">
+  <p>Money: $<span id="money">0</span></p>
+  <p>Speed: <span id="speed">50</span> km/h</p>
+  <p>Money/sec: $<span id="moneyPerSec">160</span></p>
+  <p>Current Car: <span id="currentCar">Starter Car 1</span></p>
+  <button id="upgradeSpeed">Upgrade Speed ($550)</button>
+  <button id="upgradeMultiplier">Upgrade Earnings ($1090)</button>
+  <div id="carsUI"></div>
+  <div id="boostBar"><div id="boostFill"></div></div>
+  <p id="nitroStatus" style="margin-top:5px;">Nitro Ready</p>
+</div>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// Game Variables
+let money = 0;
+let baseSpeed = 50;
+let speed = baseSpeed;
+let moneyPerSec = 90;
+let earningsMultiplier = 1;
+let speedUpgradeCost = 550;
+let multiplierUpgradeCost = 1090;
+let boosting = false;
+let nitroActive = false;
+let nitroCooldown = false;
+
+// Car definitions
+const cars = [
+  {name:"Starter Car 1", speed:50, multiplier:1, color:"#ff0000", cost:0, purchased:true, maxSpeed:150, engineSound:"https://cdn.pixabay.com/download/audio/2021/09/17/audio_57a62e45e2.mp3?filename=car-engine-ambient-loop-11424.mp3"},
+  {name:"Starter Car 2", speed:70, multiplier:1.1, color:"#00ff00", cost:200*8, purchased:false, maxSpeed:198, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_2ed1db1c8a.mp3?filename=fast-car-loop-11365.mp3"},
+  {name:"Starter Car 3", speed:90, multiplier:1.15, color:"#0000ff", cost:400*8, purchased:false, maxSpeed:240, engineSound:"https://cdn.pixabay.com/download/audio/2021/09/17/audio_57a62e45e2.mp3?filename=car-engine-ambient-loop-11424.mp3"},
+  {name:"Ferrari F8", speed:120, multiplier:2.2, color:"#ff4500", cost:550*8, purchased:false, maxSpeed:270, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_0a9c30e5f5.mp3?filename=ferrari-loop-11432.mp3"},
+  {name:"Lamborghini", speed:150, multiplier:1.5, color:"#ffff00", cost:800*8, purchased:false, maxSpeed:310, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_02b0b9b7e3.mp3?filename=lamborghini-loop-11427.mp3"},
+  {name:"Supra MK4", speed:174, multiplier:2, color:"#ff00ff", cost:1500*8, purchased:false, maxSpeed:380, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_3b5f2f9c2e.mp3?filename=supra-loop-11429.mp3"},
+  {name:"McLaren P1", speed:200, multiplier:2.5, color:"#1e90ff", cost:4000*8, purchased:false, maxSpeed:430, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_5c9c2cfd3f.mp3?filename=mclaren-loop-11435.mp3"},
+  {name:"Bugatti Chiron", speed:250, multiplier:3, color:"#00ffff", cost:6000*8, purchased:false, maxSpeed:498, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_3f8b3dcd8d.mp3?filename=bugatti-loop-11437.mp3"},
+  {name:"Koenigsegg", speed:300, multiplier:3.2, color:"#ffffff", sideColor:"#00ff00", cost:10000*8, purchased:false, maxSpeed:548, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_8b6c2c0b99.mp3?filename=koenigsegg-loop-11440.mp3"},
+  {name:"thrust_ssc", speed:480, multiplier:4.7, color:"#ffffff", sideColor:"#00ff00", cost:100000*8, purchased:false, maxSpeed:1148, engineSound:"https://cdn.pixabay.com/download/audio/2022/01/27/audio_8b6c2c0b99.mp3?filename=koenigsegg-loop-11440.mp3"}
+];
+
+let currentCarIndex = 0;
+let carObj = { x:100, y:canvas.height-150, width:120, height:60, wheelSize:20 };
+
+// Background
+let bgOffset = 0;
+const mountains=[], trees=[], clouds=[];
+for(let i=0;i<5;i++) mountains.push({x:i*400, y:canvas.height-250, width:400, height:150});
+for(let i=0;i<15;i++) trees.push({x:i*150, y:canvas.height-200, width:40, height:80});
+for(let i=0;i<12;i++) clouds.push({x:i*300, y:50+Math.random()*100, width:120, height:60});
+
+// Engine sound
+let engineAudio = new Audio(cars[currentCarIndex].engineSound);
+engineAudio.loop = true;
+engineAudio.volume = 0.3;
+engineAudio.play().catch(()=>{}); 
+
+// Update stats
+function updateStats(){
+  document.getElementById('money').innerText = money.toFixed(2);
+  document.getElementById('speed').innerText = Math.round(speed);
+  let mps = moneyPerSec * cars[currentCarIndex].multiplier * earningsMultiplier;
+  if(nitroActive) mps *= 2.3;
+  document.getElementById('moneyPerSec').innerText = mps.toFixed(2);
+  document.getElementById('currentCar').innerText = cars[currentCarIndex].name;
+  updateCarUI();
+}
+
+// Upgrade buttons
+document.getElementById('upgradeSpeed').addEventListener('click',()=>{
+  if(money>=speedUpgradeCost){
+    money-=speedUpgradeCost;
+    baseSpeed+=10;
+    moneyPerSec+=0; // moneyPerSec remains 160 base
+    speedUpgradeCost=Math.floor(speedUpgradeCost*1.3);
+    document.getElementById('upgradeSpeed').innerText=`Upgrade Speed ($${speedUpgradeCost})`;
+    speed = Math.min(baseSpeed, cars[currentCarIndex].maxSpeed);
+    updateStats();
+  }
+});
+document.getElementById('upgradeMultiplier').addEventListener('click',()=>{
+  if(money>=multiplierUpgradeCost){
+    money-=multiplierUpgradeCost;
+    earningsMultiplier *= 1.59;
+    multiplierUpgradeCost = Math.floor(multiplierUpgradeCost*1.5);
+    document.getElementById('upgradeMultiplier').innerText=`Upgrade Earnings ($${multiplierUpgradeCost})`;
+    updateStats();
+  }
+});
+
+// Car UI
+const carsUI=document.getElementById('carsUI');
+function updateCarUI(){
+  carsUI.innerHTML='';
+  cars.forEach((car,i)=>{
+    const btn=document.createElement('div');
+    btn.className='carBtn';
+    if(!car.purchased) btn.classList.add('disabled');
+    btn.innerText=car.name+'\n$'+car.cost;
+    btn.addEventListener('click',()=>{
+      if(!car.purchased){
+        if(money>=car.cost){
+          money-=car.cost;
+          car.purchased=true;
+          baseSpeed=car.speed;
+          speed = Math.min(baseSpeed, car.maxSpeed);
+          earningsMultiplier=car.multiplier;
+          currentCarIndex=i;
+          engineAudio.src = cars[currentCarIndex].engineSound;
+          engineAudio.play().catch(()=>{});
+          updateStats();
+        } else alert("Not enough money!");
+      } else {
+        baseSpeed=car.speed;
+        speed = Math.min(baseSpeed, car.maxSpeed);
+        earningsMultiplier=car.multiplier;
+        currentCarIndex=i;
+        engineAudio.src = cars[currentCarIndex].engineSound;
+        engineAudio.play().catch(()=>{});
+        updateStats();
+      }
+    });
+    carsUI.appendChild(btn);
+  });
+}
+
+// Earn money
+setInterval(()=>{
+  let mps = moneyPerSec * cars[currentCarIndex].multiplier * earningsMultiplier;
+  if(nitroActive) mps *= 2.3;
+  money += mps;
+  updateStats();
+},1000);
+
+// Draw background
+function drawBackground(){
+  ctx.fillStyle="#87CEEB"; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Clouds
+  clouds.forEach(cl=>{
+    ctx.fillStyle="rgba(255,255,255,0.8)";
+    ctx.beginPath();
+    ctx.ellipse(cl.x-bgOffset*0.3, cl.y, cl.width, cl.height, 0, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  mountains.forEach(m=>{
+    ctx.fillStyle="#556B2F";
+    ctx.beginPath();
+    ctx.moveTo(m.x-bgOffset, m.y+m.height);
+    ctx.lineTo(m.x+m.width/2-bgOffset, m.y);
+    ctx.lineTo(m.x+m.width-bgOffset, m.y+m.height);
+    ctx.closePath();
+    ctx.fill();
+  });
+
+  trees.forEach(t=>{
+    ctx.fillStyle="#228B22";
+    ctx.fillRect(t.x-bgOffset, t.y, t.width, t.height);
+  });
+
+  bgOffset+=speed*0.5;
+  if(bgOffset>canvas.width) bgOffset=0;
+}
+
+// Draw road
+function drawRoad(){
+  ctx.fillStyle="#555";
+  ctx.fillRect(0, canvas.height-100, canvas.width, 100);
+  ctx.strokeStyle="#fff"; ctx.lineWidth=5;
+  ctx.setLineDash([40,30]);
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height-50);
+  ctx.lineTo(canvas.width, canvas.height-50);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+// Draw car
+function drawCar(){
+  const car=cars[currentCarIndex];
+  if(car.name==="Koenigsegg"){
+    // Draw Koenigsegg with green sides
+    ctx.fillStyle=car.color;
+    ctx.fillRect(carObj.x, carObj.y, carObj.width, carObj.height);
+    ctx.fillStyle=car.sideColor;
+    ctx.fillRect(carObj.x+5, carObj.y+10, carObj.width-10, 40);
+  } else {
+    ctx.fillStyle=car.color;
+    ctx.fillRect(carObj.x, carObj.y, carObj.width, carObj.height);
+  }
+  ctx.fillStyle="#000";
+  ctx.beginPath();
+  ctx.arc(carObj.x+25, carObj.y+carObj.height, carObj.wheelSize,0,Math.PI*2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(carObj.x+carObj.width-25, carObj.y+carObj.height, carObj.wheelSize,0,Math.PI*2); ctx.fill();
+}
+
+// Tap-to-boost (1.28x)
+const boostFill = document.getElementById('boostFill');
+canvas.addEventListener('click',()=>{
+  if(!boosting){
+    boosting=true;
+    speed = Math.min(baseSpeed*1.28, cars[currentCarIndex].maxSpeed);
+    boostFill.style.width='100%';
+    setTimeout(()=>{ 
+      speed=baseSpeed; 
+      boosting=false; 
+      boostFill.style.width='0%';
+    },1000);
+  }
+});
+
+// Nitro (B key)
+document.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='b'){
+    if(!nitroActive && !nitroCooldown){
+      nitroActive = true;
+      nitroCooldown = true;
+      let originalSpeed = speed;
+      speed = Math.min(speed*2.74, cars[currentCarIndex].maxSpeed);
+      document.getElementById('nitroStatus').innerText="Nitro Active!";
+      setTimeout(()=>{
+        nitroActive = false;
+        speed = Math.min(baseSpeed, cars[currentCarIndex].maxSpeed);
+        document.getElementById('nitroStatus').innerText="Nitro Cooldown...";
+        setTimeout(()=>{ document.getElementById('nitroStatus').innerText="Nitro Ready"; nitroCooldown=false; },30000);
+      },10000);
+    }
+  }
+});
+
+// Save/Load
+document.getElementById('saveGame').addEventListener('click',()=>{
+  localStorage.setItem('carIdleSave', JSON.stringify({
+    money, baseSpeed, earningsMultiplier, speedUpgradeCost, multiplierUpgradeCost,
+    currentCarIndex, cars
+  }));
+  alert('Game Saved!');
+});
+document.getElementById('loadGame').addEventListener('click',()=>{
+  const save = JSON.parse(localStorage.getItem('carIdleSave'));
+  if(save){
+    money=save.money;
+    baseSpeed=save.baseSpeed;
+    earningsMultiplier=save.earningsMultiplier;
+    speedUpgradeCost=save.speedUpgradeCost;
+    multiplierUpgradeCost=save.multiplierUpgradeCost;
+    currentCarIndex=save.currentCarIndex;
+    for(let i=0;i<cars.length;i++) cars[i].purchased=save.cars[i].purchased;
+    speed=Math.min(baseSpeed, cars[currentCarIndex].maxSpeed);
+    engineAudio.src=cars[currentCarIndex].engineSound;
+    engineAudio.play().catch(()=>{});
+    updateStats();
+    alert('Game Loaded!');
+  } else alert('No save found!');
+});
+
+// Game loop
+function gameLoop(){
+  drawBackground();
+  drawRoad();
+  drawCar();
+  requestAnimationFrame(gameLoop);
+}
+
+// Start
+updateStats();
+gameLoop();
+</script>
+</body>
+</html>
+
